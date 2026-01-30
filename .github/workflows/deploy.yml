@@ -37,7 +37,7 @@ jobs:
         run: |
           aws s3 cp "${{ env.ZIP_NAME }}" "s3://${{ secrets.S3_BUCKET }}/${{ env.S3_KEY }}"
 
-      - name: Deploy via SSM
+           - name: Deploy via SSM
         shell: pwsh
         run: |
           $SitePath = 'C:\Sites\test-web'
@@ -65,5 +65,4 @@ jobs:
 
           $params = @{ commands = $commands } | ConvertTo-Json -Compress
 
-          aws ssm send-command `
-            --instance-ids "i-0ff3eed394d63c2c"
+          aws ssm send-command --instance-ids "i-0ff3eed394d63c2c" --document-name "AWS-RunPowerShellScript" --comment "Deploy TEST-WEB from GitHub Actions" --parameters $params
