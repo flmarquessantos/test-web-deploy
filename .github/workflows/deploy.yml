@@ -40,19 +40,18 @@ jobs:
       - name: Deploy via AWS SSM
         shell: pwsh
         run: |
-          $SitePath = 'C:\Sites\test-web'
-          $AppPool  = 'test-web'
-
-          # Script que vai rodar DENTRO da EC2 via SSM (PowerShell)
           $commands = @(
             '$ErrorActionPreference = "Stop"',
             'Import-Module WebAdministration',
 
-            # Base dirs
+            # Ajuste aqui se mudar:
+            '$SitePath = "C:\Sites\test-web"',
+            '$AppPool  = "test-web"',
+            '$offline  = Join-Path $SitePath "app_offline.htm"',
+
             'New-Item -ItemType Directory -Force -Path "C:\Deploy\temp"   | Out-Null',
             'New-Item -ItemType Directory -Force -Path "C:\Deploy\backup" | Out-Null',
 
-            # Timestamp / paths
             '$stamp  = Get-Date -Format "yyyyMMdd_HHmmss"',
             '$temp   = Join-Path "C:\Deploy\temp"   $stamp',
             '$backup = Join-Path "C:\Deploy\backup" $stamp',
@@ -60,33 +59,28 @@ jobs:
             'New-Item -ItemType Directory -Force -Path $backup | Out-Null',
 
             # Backup do site atual
-            'robocopy "' + $SitePath + '" $backup /MIR /R:2 /W:2 /NFL /NDL /NP | Out-Null',
-
-            # Mantém só 10 backups
+            'robocopy $SitePath $backup /MIR /R:2 /W:2 /NFL /NDL /NP | Out-Null',
             'Get-ChildItem "C:\Deploy\backup" | Sort-Object CreationTime -Descending | Select-Object -Skip 10 | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue',
 
-            # Paths do pacote
+            # Baixa ZIP
             '$zip     = Join-Path $temp "package.zip"',
             '$extract = Join-Path $temp "extract"',
             'New-Item -ItemType Directory -Force -Path $extract | Out-Null',
 
-            # Download do S3 (BLINDADO contra token/aspas)
             '$awsExe = "C:\Program Files\Amazon\AWSCLIV2\aws.exe"',
             'if (-not (Test-Path $awsExe)) { $awsExe = "aws.exe" }',
             '$s3uri = "s3://${{ secrets.S3_BUCKET }}/${{ env.S3_KEY }}"',
             'Start-Process -FilePath $awsExe -ArgumentList @("s3","cp",$s3uri,$zip) -Wait -NoNewWindow',
             'if (-not (Test-Path $zip)) { throw "ZIP nao foi baixado do S3: $s3uri" }',
 
-            # Extrai
             'Expand-Archive -Path $zip -DestinationPath $extract -Force',
 
-            # app_offline + stop pool + deploy
-            '"Deploy em andamento ($stamp)" | Out-File -Encoding utf8 (Join-Path "' + $SitePath + '" "app_offline.htm")',
-            'Stop-WebAppPool -Name "' + $AppPool + '"',
-            'robocopy $extract "' + $SitePath + '" /MIR /R:2 /W:2 /NFL /NDL /NP | Out-Null',
-            'Start-WebAppPool -Name "' + $AppPool + '"',
-            'Remove-Item (Join-Path "' + $SitePath + '" "app_offline.htm") -Force -ErrorAction SilentlyContinue',
-
+            # Deploy
+            '"Deploy em andamento ($stamp)" | Out-File -Encoding utf8 $offline',
+            'Stop-WebAppPool -Name $AppPool',
+            'robocopy $extract $SitePath /MIR /R:2 /W:2 /NFL /NDL /NP | Out-Null',
+            'Start-WebAppPool -Name $AppPool',
+            'Remove-Item $offline -Force -ErrorAction SilentlyContinue',
             'Write-Host "Deploy finished. Backup em: C:\Deploy\backup\$stamp"'
           )
 
