@@ -42,6 +42,7 @@ jobs:
         run: |
           $SitePath = 'C:\Sites\test-web'
           $AppPool  = 'test-web'
+          $InstanceId = 'i-0ff3eed394d63c2c'
 
           $commands = @(
             '$ErrorActionPreference="Stop"',
@@ -63,15 +64,19 @@ jobs:
             'Write-Host "Deploy finished."'
           )
 
-          $params = @{ commands = $commands } | ConvertTo-Json -Compress
+          # commands em JSON (lista)
+          $commandsJson = $commands | ConvertTo-Json -Compress
 
-          $payload = @{
-           DocumentName = "AWS-RunPowerShellScript"
-            InstanceIds  = @("i-0ff3eed394d63c2c")
-            Comment      = "Deploy TEST-WEB from GitHub Actions"
-           Parameters   = @{ commands = $commands }
-            } | ConvertTo-Json -Compress
+          # payload do AWS CLI (JSON válido)
+          $payload = @"
+          {
+            "DocumentName": "AWS-RunPowerShellScript",
+            "InstanceIds": ["$InstanceId"],
+            "Comment": "Deploy TEST-WEB from GitHub Actions",
+            "Parameters": {
+              "commands": $commandsJson
+            }
+          }
+          "@
 
           aws ssm send-command --cli-input-json "$payload"
-
-
