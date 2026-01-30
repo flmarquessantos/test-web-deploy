@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="pt-br">
+<head>
+  <meta charset="utf-8" />
+  <title>TEST-WEB</title>
+</head>
+<body>
+  <h1>TEST-WEB - Deploy automático OK ✅</h1>
+  <p>Se você está vendo isso, o GitHub publicou no IIS.</p>
+
+  <h3>Versão do deploy</h3>
+  <pre id="ver">carregando...</pre>
+
+  <script>
+    fetch('version.json?cache=' + Date.now())
+      .then(r => r.json())
+      .then(j => document.getElementById('ver').textContent = JSON.stringify(j, null, 2))
+      .catch(() => document.getElementById('ver').textContent = 'Falha ao ler version.json');
+  </script>
+</body>
+</html>
