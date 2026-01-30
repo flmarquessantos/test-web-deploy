@@ -64,6 +64,14 @@ jobs:
           )
 
           $params = @{ commands = $commands } | ConvertTo-Json -Compress
-          aws ssm send-command --instance-ids i-0ff3eed394d63c2c --document-name "AWS-RunPowerShellScript" --comment "Deploy TEST-WEB from GitHub Actions" --parameters "$params"
+
+          $payload = @{
+           DocumentName = "AWS-RunPowerShellScript"
+            InstanceIds  = @("i-0ff3eed394d63c2c")
+            Comment      = "Deploy TEST-WEB from GitHub Actions"
+           Parameters   = @{ commands = $commands }
+            } | ConvertTo-Json -Compress
+
+          aws ssm send-command --cli-input-json "$payload"
 
 
