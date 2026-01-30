@@ -13,10 +13,10 @@ jobs:
     runs-on: windows-latest
 
     steps:
-      - name: Checkout repository
+      - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Zip site folder
+      - name: Zip site
         shell: pwsh
         run: |
           $stamp = Get-Date -Format "yyyy-MM-dd_HHmmss"
@@ -25,36 +25,34 @@ jobs:
           "ZIP_NAME=$zip" | Out-File -FilePath $env:GITHUB_ENV -Append
           "S3_KEY=test-web/$zip" | Out-File -FilePath $env:GITHUB_ENV -Append
 
-      - name: Configure AWS Credentials
+      - name: AWS creds
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region:            ${{ secrets.AWS_REGION }}
+          aws-region: ${{ secrets.AWS_REGION }}
 
-      - name: Upload ZIP to S3
+      - name: Upload to S3
         shell: pwsh
         run: |
           aws s3 cp "${{ env.ZIP_NAME }}" "s3://${{ secrets.S3_BUCKET }}/${{ env.S3_KEY }}"
 
-      - name: Deploy via AWS SSM
+      - name: Deploy via SSM
         shell: pwsh
         run: |
           $SitePath   = 'C:\Sites\test-web'
           $AppPool    = 'test-web'
-          $InstanceId = "${{ secrets.AWS_EC2_INSTANCE_ID }}"
-
-          # Debug: mostra o valor para troubleshooting
-          Write-Host "Instance ID lido: [$InstanceId]"
-
-          if ([string]::IsNullOrWhiteSpace($InstanceId)) {
-            Write-Error "ERRO: InstanceId está vazio! Verifique o secret AWS_EC2_INSTANCE_ID no GitHub."
-            exit 1
-          }
+          $InstanceId = '${{ secrets.INSTANCE_ID }}'
+          $Bucket     = '${{ secrets.S3_BUCKET }}'
+          $Key        = '${{ env.S3_KEY }}'
 
           $commands = @(
             '$ErrorActionPreference="Stop"',
             'Import-Module WebAdministration',
+
+            # Caminho do AWS CLI no Windows (com espaços) -> usar & para executar
+            '$aws = "C:\Program Files\Amazon\AWSCLIV2\aws.exe"',
+
             'New-Item -ItemType Directory -Force -Path "C:\Deploy\temp" | Out-Null',
             '$stamp = Get-Date -Format "yyyyMMdd_HHmmss"',
             '$temp = "C:\Deploy\temp\" + $stamp',
@@ -62,29 +60,34 @@ jobs:
             '$zip = Join-Path $temp "package.zip"',
             '$extract = Join-Path $temp "extract"',
             'New-Item -ItemType Directory -Force -Path $extract | Out-Null',
-            '"C:\Program Files\Amazon\AWSCLIV2\aws.exe" s3 cp "s3://${{ secrets.S3_BUCKET }}/${{ env.S3_KEY }}" $zip',
+
+            # Baixa do S3 usando o aws.exe corretamente (call operator &)
+            ('& $aws s3 cp "s3://{0}/{1}" "{2}"' -f $Bucket, $Key, '$zip'),
+
             'Expand-Archive -Path $zip -DestinationPath $extract -Force',
-            '"Deploy em andamento ($stamp)" | Out-File -Encoding utf8 (Join-Path "' + $SitePath + '" "app_offline.htm")',
-            'Stop-WebAppPool -Name "' + $AppPool + '"',
-            'robocopy $extract "' + $SitePath + '" /MIR /R:2 /W:2 /NFL /NDL /NP | Out-Null',
-            'Start-WebAppPool -Name "' + $AppPool + '"',
-            'Remove-Item (Join-Path "' + $SitePath + '" "app_offline.htm") -Force -ErrorAction SilentlyContinue',
+
+            # Coloca app_offline.htm durante o deploy
+            ('"Deploy em andamento ($stamp)" | Out-File -Encoding utf8 (Join-Path "{0}" "app_offline.htm")' -f $SitePath),
+
+            # Reinicia pool e publica arquivos
+            ('Stop-WebAppPool -Name "{0}"' -f $AppPool),
+            ('robocopy "{0}" "{1}" /MIR /R:2 /W:2 /NFL /NDL /NP | Out-Null' -f '$extract', $SitePath),
+            ('Start-WebAppPool -Name "{0}"' -f $AppPool),
+
+            # Remove app_offline.htm
+            ('Remove-Item (Join-Path "{0}" "app_offline.htm") -Force -ErrorAction SilentlyContinue' -f $SitePath),
+
             'Write-Host "Deploy finished."'
           )
 
-          $commandsJson = $commands | ConvertTo-Json -Compress
-
-          # Payload com expansão explícita
-          $payload = @"
-          {
-            "DocumentName": "AWS-RunPowerShellScript",
-            "InstanceIds": ["$($InstanceId)"],
-            "Comment": "Deploy TEST-WEB from GitHub Actions",
-            "Parameters": {
-              "commands": $commandsJson
+          # Envia para o SSM como JSON correto
+          $payload = @{
+            DocumentName = "AWS-RunPowerShellScript"
+            InstanceIds  = @($InstanceId)
+            Comment      = "Deploy TEST-WEB from GitHub Actions"
+            Parameters   = @{
+              commands = $commands
             }
-          }
-          "@
+          } | ConvertTo-Json -Compress
 
-          Write-Host "Enviando comando SSM..."
           aws ssm send-command --cli-input-json "$payload"
