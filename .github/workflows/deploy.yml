@@ -25,79 +25,76 @@ jobs:
           "ZIP_NAME=$zip" | Out-File -FilePath $env:GITHUB_ENV -Append
           "S3_KEY=test-web/$zip" | Out-File -FilePath $env:GITHUB_ENV -Append
 
-      - name: AWS creds
+      - name: Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ secrets.AWS_REGION }}
 
-      - name: Upload to S3
+      - name: Upload ZIP to S3
         shell: pwsh
         run: |
           aws s3 cp "${{ env.ZIP_NAME }}" "s3://${{ secrets.S3_BUCKET }}/${{ env.S3_KEY }}"
 
-      - name: Deploy via SSM
+      - name: Deploy via AWS SSM
         shell: pwsh
         run: |
-          $SitePath   = 'C:\Sites\test-web'
-          $AppPool    = 'test-web'
-          $InstanceId = '${{ secrets.INSTANCE_ID }}'
-          $Bucket     = '${{ secrets.S3_BUCKET }}'
-          $Key        = '${{ env.S3_KEY }}'
+          $SitePath = 'C:\Sites\test-web'
+          $AppPool  = 'test-web'
 
+          # Script que vai rodar DENTRO da EC2 via SSM (PowerShell)
           $commands = @(
-            '$ErrorActionPreference="Stop"',
+            '$ErrorActionPreference = "Stop"',
             'Import-Module WebAdministration',
 
-            # pastas base
-            'New-Item -ItemType Directory -Force -Path "C:\Deploy\temp" | Out-Null',
+            # Base dirs
+            'New-Item -ItemType Directory -Force -Path "C:\Deploy\temp"   | Out-Null',
             'New-Item -ItemType Directory -Force -Path "C:\Deploy\backup" | Out-Null',
 
-              # timestamp
-              '$stamp = Get-Date -Format "yyyyMMdd_HHmmss"',
-              '$temp = "C:\Deploy\temp\" + $stamp',
-              '$backup = "C:\Deploy\backup\" + $stamp',
+            # Timestamp / paths
+            '$stamp  = Get-Date -Format "yyyyMMdd_HHmmss"',
+            '$temp   = Join-Path "C:\Deploy\temp"   $stamp',
+            '$backup = Join-Path "C:\Deploy\backup" $stamp',
+            'New-Item -ItemType Directory -Force -Path $temp   | Out-Null',
+            'New-Item -ItemType Directory -Force -Path $backup | Out-Null',
 
-              'New-Item -ItemType Directory -Force -Path $temp | Out-Null',
-              'New-Item -ItemType Directory -Force -Path $backup | Out-Null',
+            # Backup do site atual
+            'robocopy "' + $SitePath + '" $backup /MIR /R:2 /W:2 /NFL /NDL /NP | Out-Null',
 
-              # backup do site atual
-              'robocopy "' + $SitePath + '" $backup /MIR /R:2 /W:2 /NFL /NDL /NP | Out-Null',
+            # Mantém só 10 backups
+            'Get-ChildItem "C:\Deploy\backup" | Sort-Object CreationTime -Descending | Select-Object -Skip 10 | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue',
 
-              # limpa backups antigos (mantém só os 10 últimos)
-              'Get-ChildItem "C:\Deploy\backup" | Sort-Object CreationTime -Descending | Select-Object -Skip 10 | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue',
+            # Paths do pacote
+            '$zip     = Join-Path $temp "package.zip"',
+            '$extract = Join-Path $temp "extract"',
+            'New-Item -ItemType Directory -Force -Path $extract | Out-Null',
 
-              # download e extração
-              '$zip = Join-Path $temp "package.zip"',
-              '$extract = Join-Path $temp "extract"',
-              'New-Item -ItemType Directory -Force -Path $extract | Out-Null',
-              '"C:\Program Files\Amazon\AWSCLIV2\aws.exe" s3 cp "s3://${{ secrets.S3_BUCKET }}/${{ env.S3_KEY }}" $zip',
-              'Expand-Archive -Path $zip -DestinationPath $extract -Force',
+            # Download do S3 (BLINDADO contra token/aspas)
+            '$awsExe = "C:\Program Files\Amazon\AWSCLIV2\aws.exe"',
+            'if (-not (Test-Path $awsExe)) { $awsExe = "aws.exe" }',
+            '$s3uri = "s3://${{ secrets.S3_BUCKET }}/${{ env.S3_KEY }}"',
+            'Start-Process -FilePath $awsExe -ArgumentList @("s3","cp",$s3uri,$zip) -Wait -NoNewWindow',
+            'if (-not (Test-Path $zip)) { throw "ZIP nao foi baixado do S3: $s3uri" }',
 
-              # app offline
-              '"Deploy em andamento ($stamp)" | Out-File -Encoding utf8 (Join-Path "' + $SitePath + '" "app_offline.htm")',
+            # Extrai
+            'Expand-Archive -Path $zip -DestinationPath $extract -Force',
 
-              # swap
-              'Stop-WebAppPool -Name "' + $AppPool + '"',
-              'robocopy $extract "' + $SitePath + '" /MIR /R:2 /W:2 /NFL /NDL /NP | Out-Null',
-              'Start-WebAppPool -Name "' + $AppPool + '"',
+            # app_offline + stop pool + deploy
+            '"Deploy em andamento ($stamp)" | Out-File -Encoding utf8 (Join-Path "' + $SitePath + '" "app_offline.htm")',
+            'Stop-WebAppPool -Name "' + $AppPool + '"',
+            'robocopy $extract "' + $SitePath + '" /MIR /R:2 /W:2 /NFL /NDL /NP | Out-Null',
+            'Start-WebAppPool -Name "' + $AppPool + '"',
+            'Remove-Item (Join-Path "' + $SitePath + '" "app_offline.htm") -Force -ErrorAction SilentlyContinue',
 
-              # remove offline
-              'Remove-Item (Join-Path "' + $SitePath + '" "app_offline.htm") -Force -ErrorAction SilentlyContinue',
+            'Write-Host "Deploy finished. Backup em: C:\Deploy\backup\$stamp"'
+          )
 
-              'Write-Host "Deploy finished with backup in C:\Deploy\backup\"'
-            )
-
-
-          # Envia para o SSM como JSON correto
           $payload = @{
             DocumentName = "AWS-RunPowerShellScript"
-            InstanceIds  = @($InstanceId)
+            InstanceIds  = @("${{ secrets.INSTANCE_ID }}")
             Comment      = "Deploy TEST-WEB from GitHub Actions"
-            Parameters   = @{
-              commands = $commands
-            }
+            Parameters   = @{ commands = $commands }
           } | ConvertTo-Json -Compress
 
-          aws ssm send-command --cli-input-json "$payload"
+          aws ssm send-command --cli-input-json $payload
