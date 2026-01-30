@@ -13,7 +13,8 @@ jobs:
     runs-on: windows-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
       - name: Zip site
         shell: pwsh
@@ -62,8 +63,7 @@ jobs:
             'Write-Host "Deploy finished."'
           )
 
+          $params = @{ commands = $commands } | ConvertTo-Json -Compress
+
           aws ssm send-command `
-            --instance-ids "i-0ff3eed394d63c2c" `
-            --document-name "AWS-RunPowerShellScript" `
-            --comment "Deploy TEST-WEB from GitHub Actions" `
-            --parameters commands="$($commands -join \"`n\")"
+            --instance-ids "i-0ff3eed394d63c2c
