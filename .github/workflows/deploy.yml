@@ -32,15 +32,20 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region:            ${{ secrets.AWS_REGION }}
 
-       - name: Deploy via AWS SSM
+      - name: Upload ZIP to S3
+        shell: pwsh
+        run: |
+          aws s3 cp "${{ env.ZIP_NAME }}" "s3://${{ secrets.S3_BUCKET }}/${{ env.S3_KEY }}"
+
+      - name: Deploy via AWS SSM
         shell: pwsh
         run: |
           $SitePath   = 'C:\Sites\test-web'
           $AppPool    = 'test-web'
           $InstanceId = "${{ secrets.AWS_EC2_INSTANCE_ID }}"
 
-          # Debug: mostra o valor real (não expõe no log público, mas ajuda no troubleshooting)
-          Write-Host "Instance ID lido: [$InstanceId]"   # Isso aparece nos logs
+          # Debug: mostra o valor para troubleshooting
+          Write-Host "Instance ID lido: [$InstanceId]"
 
           if ([string]::IsNullOrWhiteSpace($InstanceId)) {
             Write-Error "ERRO: InstanceId está vazio! Verifique o secret AWS_EC2_INSTANCE_ID no GitHub."
@@ -69,7 +74,7 @@ jobs:
 
           $commandsJson = $commands | ConvertTo-Json -Compress
 
-          # Usa expansão dupla para garantir que $InstanceId seja substituído
+          # Payload com expansão explícita
           $payload = @"
           {
             "DocumentName": "AWS-RunPowerShellScript",
@@ -81,7 +86,5 @@ jobs:
           }
           "@
 
-          Write-Host "Payload gerado (sem secrets):"
-          Write-Host ($payload -replace '"commands":.*', '"commands": [...]')  # mascara o commands longo
-
+          Write-Host "Enviando comando SSM..."
           aws ssm send-command --cli-input-json "$payload"
