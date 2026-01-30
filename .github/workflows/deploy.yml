@@ -62,7 +62,7 @@ jobs:
             '$zip = Join-Path $temp "package.zip"',
             '$extract = Join-Path $temp "extract"',
             'New-Item -ItemType Directory -Force -Path $extract | Out-Null',
-            'aws s3 cp "s3://${{ secrets.S3_BUCKET }}/${{ env.S3_KEY }}" $zip',
+            '"C:\Program Files\Amazon\AWSCLIV2\aws.exe" s3 cp "s3://${{ secrets.S3_BUCKET }}/${{ env.S3_KEY }}" $zip',
             'Expand-Archive -Path $zip -DestinationPath $extract -Force',
             '"Deploy em andamento ($stamp)" | Out-File -Encoding utf8 (Join-Path "' + $SitePath + '" "app_offline.htm")',
             'Stop-WebAppPool -Name "' + $AppPool + '"',
