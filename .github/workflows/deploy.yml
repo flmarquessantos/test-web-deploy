@@ -65,5 +65,7 @@ jobs:
 
           $params = @{ commands = $commands } | ConvertTo-Json -Compress
 
+          Write-Host "INSTANCE_ID='${{ secrets.INSTANCE_ID }}'"
+
           aws ssm send-command --instance-ids "${{ secrets.INSTANCE_ID }}" --document-name "AWS-RunPowerShellScript" --comment "Deploy TEST-WEB from GitHub Actions" --parameters $params
 
