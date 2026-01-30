@@ -13,10 +13,10 @@ jobs:
     runs-on: windows-latest
 
     steps:
-      - name: Checkout
+      - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Zip site
+      - name: Zip site folder
         shell: pwsh
         run: |
           $stamp = Get-Date -Format "yyyy-MM-dd_HHmmss"
@@ -25,24 +25,24 @@ jobs:
           "ZIP_NAME=$zip" | Out-File -FilePath $env:GITHUB_ENV -Append
           "S3_KEY=test-web/$zip" | Out-File -FilePath $env:GITHUB_ENV -Append
 
-      - name: AWS creds
+      - name: Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ secrets.AWS_REGION }}
+          aws-region:            ${{ secrets.AWS_REGION }}
 
-      - name: Upload to S3
+      - name: Upload ZIP to S3
         shell: pwsh
         run: |
           aws s3 cp "${{ env.ZIP_NAME }}" "s3://${{ secrets.S3_BUCKET }}/${{ env.S3_KEY }}"
 
-      - name: Deploy via SSM
+      - name: Deploy via AWS SSM
         shell: pwsh
         run: |
-          $SitePath = 'C:\Sites\test-web'
-          $AppPool  = 'test-web'
-          $InstanceId = 'i-0ff3eed394d63c2c'
+          $SitePath   = 'C:\Sites\test-web'
+          $AppPool    = 'test-web'
+          $InstanceId = "${{ secrets.AWS_EC2_INSTANCE_ID }}"
 
           $commands = @(
             '$ErrorActionPreference="Stop"',
@@ -64,10 +64,10 @@ jobs:
             'Write-Host "Deploy finished."'
           )
 
-          # commands em JSON (lista)
+          # Converte comandos para JSON compactado
           $commandsJson = $commands | ConvertTo-Json -Compress
 
-          # payload do AWS CLI (JSON válido)
+          # Payload JSON para aws ssm send-command
           $payload = @"
           {
             "DocumentName": "AWS-RunPowerShellScript",
@@ -79,4 +79,5 @@ jobs:
           }
           "@
 
+          # Envia o comando
           aws ssm send-command --cli-input-json "$payload"
